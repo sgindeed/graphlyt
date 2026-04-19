@@ -621,6 +621,20 @@ export default function NeuralArchitect() {
           )}
         </section>
       </main>
+
+      <footer className="h-10 border-t border-white/5 bg-[#080c14]/80 backdrop-blur-xl px-6 flex items-center justify-center text-xs text-slate-400">
+        <p>
+          Made with ❤️ and ⚡ by{' '}
+          <a
+            href="https://github.com/sgindeed"
+            target="_blank"
+            rel="noreferrer"
+            className="text-blue-300 hover:text-blue-200 underline underline-offset-2"
+          >
+            Supratim
+          </a>
+        </p>
+      </footer>
     </div>
   );
 }
