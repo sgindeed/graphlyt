@@ -7,3 +7,4 @@ PyPDF2
 pydantic
 websockets
 wsproto
+python-multipart
