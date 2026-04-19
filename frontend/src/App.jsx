@@ -36,7 +36,7 @@ export default function NeuralArchitect() {
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
 
   const [messages, setMessages] = useState([
-    { sender: 'architect', text: 'Neural Interface Standby. Awaiting manifest ingestion.' }
+    { sender: 'architect', text: 'Chat mode standby.' }
   ]);
   const [chatInput, setChatInput] = useState('');
   const [isChatLoading, setIsChatLoading] = useState(false);
@@ -367,7 +367,7 @@ export default function NeuralArchitect() {
               ))}
             </div>
             <form onSubmit={sendChatMessage} className="p-3 bg-black/20">
-              <input value={chatInput} onChange={e => setChatInput(e.target.value)} placeholder="Query matrix..." className="w-full bg-[#1e293b] border border-white/10 rounded-lg py-2 px-4 text-xs outline-none focus:border-blue-400/50" />
+              <input value={chatInput} onChange={e => setChatInput(e.target.value)} placeholder="Ask your question..." className="w-full bg-[#1e293b] border border-white/10 rounded-lg py-2 px-4 text-xs outline-none focus:border-blue-400/50" />
             </form>
           </div>
         </aside>
