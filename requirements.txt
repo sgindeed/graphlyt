@@ -1,11 +1,9 @@
 fastapi
 uvicorn
 psycopg2-binary
-python-multipart
-huggingface-hub
-PyPDF2
-llmgraph
-llmwiki
 python-dotenv
+huggingface_hub
+PyPDF2
+pydantic
 websockets
 wsproto
