@@ -1,0 +1,57 @@
+@import "tailwindcss";
+
+@theme {
+  --font-manrope: 'Manrope', sans-serif;
+  --font-inter: 'Inter', sans-serif;
+  
+  --color-background: #0b1326;
+  --color-surface: #0b1326;
+  --color-surface-dim: #0b1326;
+  --color-surface-bright: #31394d;
+  --color-surface-container-lowest: #060e20;
+  --color-surface-container-low: #131b2e;
+  --color-surface-container: #171f33;
+  --color-surface-container-high: #222a3d;
+  --color-surface-container-highest: #2d3449;
+  
+  --color-on-surface: #dae2fd;
+  --color-on-surface-variant: #bac9cc;
+  --color-outline: #849396;
+  --color-outline-variant: #3b494c;
+  
+  --color-primary: #c3f5ff;
+  --color-primary-container: #00e5ff;
+  --color-on-primary: #00363d;
+  --color-on-primary-container: #00626e;
+  
+  --color-secondary: #98d0da;
+  --color-secondary-container: #11505a;
+  
+  --color-tertiary: #ffeac0;
+  --color-tertiary-container: #fec931;
+}
+
+body {
+  background-color: var(--color-background);
+  color: var(--color-on-surface);
+  font-family: var(--font-inter);
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+/* Custom Glassmorphism Class */
+.glass-panel {
+  background: rgba(49, 57, 77, 0.2);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* Hide scrollbar for chat */
+.scrollbar-hide::-webkit-scrollbar {
+    display: none;
+}
+.scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+}
