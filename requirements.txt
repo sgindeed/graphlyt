@@ -7,3 +7,5 @@ PyPDF2
 llmgraph
 llmwiki
 python-dotenv
+websockets
+wsproto
