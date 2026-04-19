@@ -15,7 +15,11 @@ DB_PARAMS = {
 }
 
 def get_db_connection():
-    conn = psycopg2.connect(**DB_PARAMS)
+    db_url = os.getenv(
+        "DATABASE_URL", 
+        "postgresql://postgres:neural_secret_password@localhost:5432/knowledge_graph_db"
+    )
+    conn = psycopg2.connect(db_url)
     conn.autocommit = True
     return conn
 
