@@ -1,0 +1,25 @@
+services:
+  # 1. The Database Service
+  - type: worker
+    name: age-db
+    runtime: image
+    image: apache/age:latest
+    envVars:
+      - key: POSTGRES_USER
+        value: postgres
+      - key: POSTGRES_PASSWORD
+        sync: false # <--- Tells Render: "Ask me for this in the UI"
+      - key: POSTGRES_DB
+        value: knowledge_graph_db
+
+  # 2. Your FastAPI App
+  - type: web
+    name: neural-architect-api
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port 10000
+    envVars:
+      - key: DATABASE_URL
+        sync: false # <--- Ask in the UI so you can paste the full URL safely
+      - key: HF_TOKEN
+        sync: false
