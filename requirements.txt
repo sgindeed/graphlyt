@@ -8,3 +8,4 @@ pydantic
 websockets
 wsproto
 python-multipart
+openai
