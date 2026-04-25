@@ -10,7 +10,7 @@ if not HF_TOKEN:
     raise ValueError("Missing HF_TOKEN in .env file.")
 
 # Using the 8B model to ensure rapid streaming without timeouts
-client = InferenceClient("meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8", token=HF_TOKEN)
+client = InferenceClient("Qwen/Qwen2.5-72B-Instruct", token=HF_TOKEN)
 
 class WikiManager:
     def __init__(self, storage_path="./wiki_data"):
