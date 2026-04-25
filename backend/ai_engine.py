@@ -1,16 +1,18 @@
 import os
 import json
 from dotenv import load_dotenv
-from huggingface_hub import InferenceClient
+from openai import OpenAI 
 
-load_dotenv()
+load_dotenv(override=True)
 
-HF_TOKEN = os.environ.get("HF_TOKEN")
-if not HF_TOKEN:
-    raise ValueError("Missing HF_TOKEN in .env file.")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+if not GROQ_API_KEY:
+    raise ValueError("Missing GROQ_API_KEY in .env file.")
 
-# Using the 8B model to ensure rapid streaming without timeouts
-client = InferenceClient("mistralai/Mistral-7B-Instruct-v0.3", token=HF_TOKEN)
+client = OpenAI(
+    base_url="https://api.groq.com/openai/v1",
+    api_key=GROQ_API_KEY
+)
 
 class WikiManager:
     def __init__(self, storage_path="./wiki_data"):
