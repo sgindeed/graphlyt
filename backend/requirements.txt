@@ -9,3 +9,5 @@ websockets
 wsproto
 python-multipart
 openai
+networkx
+chromadb

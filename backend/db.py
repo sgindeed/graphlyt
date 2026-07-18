@@ -1,97 +1,88 @@
-import psycopg2
-from psycopg2.errors import UniqueViolation, InvalidSchemaName
+import networkx as nx
 import json
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
 
-DB_PARAMS = {
-    "dbname": "knowledge_graph_db",
-    "user": "postgres",
-    "password": os.getenv("DB_PASSWORD"), 
-    "host": "localhost",
-    "port": "5432"
-}
+# We will persist the NetworkX graph to a local JSON file
+GRAPH_FILE = "knowledge_graph.json"
 
-def get_db_connection():
-    db_url = os.getenv(
-        "DATABASE_URL", 
-        "postgresql://postgres:neural_secret_password@localhost:5432/knowledge_graph_db"
-    )
-    conn = psycopg2.connect(db_url)
-    conn.autocommit = True
-    return conn
+# Initialize a global directed graph
+G = nx.DiGraph()
 
-def init_age():
-    """Initializes Apache AGE and safely handles graph creation."""
-    conn = get_db_connection()
+def init_graph():
+    """Initializes the NetworkX graph, loading from disk if available."""
+    global G
+    if os.path.exists(GRAPH_FILE):
+        try:
+            with open(GRAPH_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                # Load graph from node-link format
+                G = nx.node_link_graph(data)
+            print("Neural Graph initialized from disk (NetworkX).")
+        except Exception as e:
+            print(f"Error loading graph from disk: {e}")
+            G = nx.DiGraph()
+    else:
+        G = nx.DiGraph()
+        print("Initialized fresh Neural Graph (NetworkX).")
+
+def _save_to_disk():
+    """Helper function to persist the graph state to a JSON file."""
     try:
-        with conn.cursor() as cur:
-            cur.execute("LOAD 'age';")
-            cur.execute("SET search_path = ag_catalog, \"$user\", public;")
-            try:
-                cur.execute("SELECT create_graph('doc_graph');")
-                print("Neural Graph 'doc_graph' initialized.")
-            except (UniqueViolation, InvalidSchemaName, Exception) as e:
-                # AGE often throws InvalidSchemaName if the graph exists
-                print("Neural Graph already exists, skipping initialization.")
-                conn.rollback() 
-    finally:
-        conn.close()
+        data = nx.node_link_data(G)
+        with open(GRAPH_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4)
+    except Exception as e:
+        print(f"Failed to persist graph to disk: {e}")
 
 def clear_graph():
     """Wipes the existing graph to ensure only the current document is visualized."""
-    conn = get_db_connection()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("LOAD 'age';")
-            cur.execute("SET search_path = ag_catalog, \"$user\", public;")
-            cur.execute("SELECT * FROM cypher('doc_graph', $$ MATCH (n) DETACH DELETE n $$) as (v agtype);")
-            print("Graph cleared for fresh ingestion.")
-    except Exception as e:
-        print(f"Clear error: {e}")
-    finally:
-        conn.close()
+    global G
+    G.clear()
+    _save_to_disk()
+    print("Graph cleared for fresh ingestion.")
 
-def save_graph_to_age(nodes, edges):
-    conn = get_db_connection()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("LOAD 'age';")
-            cur.execute("SET search_path = ag_catalog, \"$user\", public;")
-            
-            for node in nodes:
-                node_type = node.get('type', 'Entity').replace(' ', '_')
-                node_id = str(node.get('id', '')).replace("'", "''")
-                node_name = str(node.get('name', '')).replace("'", "''")
-                query = f"SELECT * FROM cypher('doc_graph', $$ MERGE (n:{node_type} {{id: '{node_id}', name: '{node_name}'}}) $$) as (v agtype);"
-                cur.execute(query)
-                
-            for edge in edges:
-                source_id = str(edge.get('source', '')).replace("'", "''")
-                target_id = str(edge.get('target', '')).replace("'", "''")
-                relation = str(edge.get('relation', 'CONNECTED_TO')).replace(' ', '_').upper()
-                query = f"SELECT * FROM cypher('doc_graph', $$ MATCH (a), (b) WHERE a.id = '{source_id}' AND b.id = '{target_id}' MERGE (a)-[r:{relation}]->(b) $$) as (v agtype);"
-                cur.execute(query)
-    finally:
-        conn.close()
+def save_graph_data(nodes, edges):
+    """Saves extracted nodes and edges directly into the NetworkX graph."""
+    global G
+    
+    for node in nodes:
+        node_id = str(node.get('id', ''))
+        # Add node, unpack the rest of the dictionary as node attributes
+        G.add_node(node_id, **node)
+        
+    for edge in edges:
+        source_id = str(edge.get('source', ''))
+        target_id = str(edge.get('target', ''))
+        relation = str(edge.get('relation', 'CONNECTED_TO')).replace(' ', '_').upper()
+        
+        # Add edge, storing the relation as 'label'
+        G.add_edge(source_id, target_id, label=relation, **edge)
+        
+    # Persist changes
+    _save_to_disk()
 
 def get_graph_data():
-    conn = get_db_connection()
-    nodes, edges = [], []
-    try:
-        with conn.cursor() as cur:
-            cur.execute("LOAD 'age';")
-            cur.execute("SET search_path = ag_catalog, \"$user\", public;")
-            cur.execute("SELECT * FROM cypher('doc_graph', $$ MATCH (n) RETURN properties(n), labels(n) $$) as (p agtype, l agtype);")
-            for row in cur.fetchall():
-                node = json.loads(str(row[0]).replace("'", '"'))
-                node['type'] = row[1][0] if row[1] else 'Entity'
-                nodes.append(node)
-            cur.execute("SELECT * FROM cypher('doc_graph', $$ MATCH (a)-[r]->(b) RETURN a.id, b.id, type(r) $$) as (s agtype, t agtype, r agtype);")
-            for row in cur.fetchall():
-                edges.append({"source": str(row[0]).strip('"'), "target": str(row[1]).strip('"'), "label": str(row[2]).strip('"')})
-    finally:
-        conn.close()
+    """Formats the NetworkX graph data for the frontend."""
+    global G
+    nodes = []
+    edges = []
+    
+    for node_id, data in G.nodes(data=True):
+        node_payload = data.copy()
+        if 'id' not in node_payload:
+            node_payload['id'] = node_id
+        if 'type' not in node_payload:
+            node_payload['type'] = 'Entity'
+        nodes.append(node_payload)
+        
+    for u, v, data in G.edges(data=True):
+        edges.append({
+            "source": u,
+            "target": v,
+            "label": data.get('label', 'CONNECTED_TO')
+        })
+        
     return {"nodes": nodes, "edges": edges}
