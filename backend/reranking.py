@@ -1,4 +1,5 @@
 import os
+import json
 import re
 from openai import OpenAI
 
@@ -10,18 +11,25 @@ client = OpenAI(
     api_key=GROQ_API_KEY
 )
 
-def rerank_chunks_with_llm(query: str, chunks: list) -> list:
-    """Uses deep-reasoning models to score context accuracy relative to query."""
+def rerank_chunks_with_llm(query: str, chunks: list, top_k: int = 5) -> list:
+    """Uses an LLM to select and order the chunks that best answer the query.
+
+    Returns a list of {"text", "original_rank"} dicts (best first) instead of
+    bare strings, so the frontend can show provenance for the reranking stage
+    separately from the raw vector-search stage.
+    """
     if not chunks:
         return []
-        
+
     system_prompt = (
-        "You are an expert retrieval evaluator. Given a user query and a list of text chunks, "
-        "identify which chunks contain the answer. "
-        "Output a JSON array of the indices (0-based) of the top 3 most relevant chunks. "
-        "Output ONLY valid JSON, e.g., [0, 2]. Do not add explanation."
+        "You are an expert retrieval evaluator. Given a user query and a numbered "
+        "list of text chunks, choose the chunks that best answer the query, ordered "
+        "from most to least relevant. "
+        f'Respond ONLY with a JSON object of the exact form {{"indices": [i1, i2, ...]}} '
+        f"containing up to {top_k} 0-based indices, most relevant first. "
+        "Do not add explanation or any other keys."
     )
-    
+
     chunks_text = "\n\n".join([f"[{i}] {chunk}" for i, chunk in enumerate(chunks)])
     user_prompt = f"Query: {query}\n\nChunks:\n{chunks_text}"
 
@@ -33,13 +41,32 @@ def rerank_chunks_with_llm(query: str, chunks: list) -> list:
                 {"role": "user", "content": user_prompt}
             ],
             temperature=0,
+            # NOTE: json_object mode requires the model to return a JSON
+            # *object*, not a bare array - the system prompt above must match
+            # that shape ({"indices": [...]}) or the model will fight the
+            # constraint and reranking silently degrades.
             response_format={"type": "json_object"}
         )
-        
+
         result_str = response.choices[0].message.content
-        indices = [int(x) for x in re.findall(r'\d+', result_str)]
-        valid_indices = list(set([i for i in indices if 0 <= i < len(chunks)]))
-        return [chunks[i] for i in valid_indices[:3]] if valid_indices else [chunks[0]]
+        try:
+            indices = json.loads(result_str).get("indices", [])
+        except (json.JSONDecodeError, AttributeError):
+            indices = [int(x) for x in re.findall(r'\d+', result_str)]
+
+        seen = set()
+        ordered_valid = []
+        for i in indices:
+            if isinstance(i, int) and 0 <= i < len(chunks) and i not in seen:
+                seen.add(i)
+                ordered_valid.append(i)
+
+        if not ordered_valid:
+            ordered_valid = list(range(min(top_k, len(chunks))))
+
+        return [{"text": chunks[i], "original_rank": i} for i in ordered_valid[:top_k]]
+
     except Exception as e:
         print(f"Reranking framework error: {e}")
-        return chunks[:2]
+        fallback_k = min(top_k, len(chunks))
+        return [{"text": chunks[i], "original_rank": i} for i in range(fallback_k)]

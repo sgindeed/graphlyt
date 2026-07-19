@@ -13,6 +13,7 @@ from db import save_graph_data, get_graph_data, clear_graph
 from vector_store import index_document_to_vector_db, clear_vector_db
 from graph_extractor import extract_graph_stream
 from rag_pipeline import query_rag_pipeline
+from utils import deduplicate_text
 
 router = APIRouter()
 
@@ -29,30 +30,41 @@ async def upload_documents(files: List[UploadFile] = File(...)):
     batch_id = str(uuid.uuid4())
     DOCUMENT_STORE[batch_id] = []
     total_chunks = 0
-    
+    files_meta = []
+
     try:
-        for file in files:
+        for file_index, file in enumerate(files):
             if not file.filename.lower().endswith('.pdf'):
                 continue
-                
+
             contents = await file.read()
             pdf_reader = PyPDF2.PdfReader(io.BytesIO(contents))
-            
+
             file_text = ""
             for page in pdf_reader.pages:
                 extracted = page.extract_text()
                 if extracted:
                     file_text += extracted + "\n"
 
+            # PDF extractors commonly re-emit repeated boilerplate / overlapping
+            # text layers as duplicated paragraphs. Clean this up once, up front,
+            # so it doesn't pollute vector chunks or waste the graph LLM's window.
+            file_text = deduplicate_text(file_text)
+
             if file_text.strip():
-                # Append chunks directly to vector collection room
-                chunks_added = index_document_to_vector_db(batch_id, file_text)
+                # Each file needs its own id namespace within the batch. Reusing
+                # batch_id alone for every file meant "chunk_0", "chunk_1"... from
+                # different files in the same upload collided in Chroma and
+                # silently overwrote one another.
+                doc_id = f"{batch_id}_f{file_index}"
+                chunks_added = index_document_to_vector_db(doc_id, file_text, filename=file.filename)
                 total_chunks += chunks_added
-                
+
                 DOCUMENT_STORE[batch_id].append({
                     "filename": file.filename,
                     "text": file_text
                 })
+                files_meta.append({"filename": file.filename, "chunk_count": chunks_added})
 
         if not DOCUMENT_STORE[batch_id]:
             raise HTTPException(status_code=400, detail="No valid text extracted from files.")
@@ -61,9 +73,12 @@ async def upload_documents(files: List[UploadFile] = File(...)):
             "status": "staged", 
             "doc_id": batch_id, 
             "file_count": len(DOCUMENT_STORE[batch_id]),
-            "chunk_count": total_chunks
+            "chunk_count": total_chunks,
+            "files": files_meta
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"Batch Multi-Ingestion Error: {e}")
         raise HTTPException(status_code=500, detail="Neural batch ingestion failed.")
@@ -83,8 +98,28 @@ async def websocket_extract(websocket: WebSocket, batch_id: str):
 
     try:
         # Loop through each uploaded document sequentially over the stream
-        for doc in staged_docs:
+        for doc_index, doc in enumerate(staged_docs):
+            # The extraction LLM invents generic ids ("node1", "node2", ...)
+            # independently for each document. Without namespacing, unrelated
+            # entities from different files in the same batch can silently
+            # collide and get merged into a single graph node. Prefix ids
+            # per-document to keep each document's entities distinct.
+            prefix = f"d{doc_index}_"
+
             for item in extract_graph_stream(doc["filename"], doc["text"]):
+                if item["type"] == "node" and isinstance(item.get("data"), dict):
+                    raw_id = str(item["data"].get("id", "")).strip()
+                    if not raw_id:
+                        continue
+                    item["data"]["id"] = prefix + raw_id
+                elif item["type"] == "edge" and isinstance(item.get("data"), dict):
+                    raw_source = str(item["data"].get("source", "")).strip()
+                    raw_target = str(item["data"].get("target", "")).strip()
+                    if not raw_source or not raw_target:
+                        continue
+                    item["data"]["source"] = prefix + raw_source
+                    item["data"]["target"] = prefix + raw_target
+
                 await websocket.send_json(item)
                 if item["type"] == "node":
                     nodes_to_save.append(item["data"])

@@ -10,4 +10,7 @@ wsproto
 python-multipart
 openai
 networkx
+groq
+langchain
+langchain-text-splitters
 chromadb
