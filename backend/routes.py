@@ -107,10 +107,11 @@ async def websocket_extract(websocket: WebSocket, batch_id: str):
             extractor_gen = extract_graph_stream(doc["filename"], doc["text"])
             
             while True:
-                try:
-                    # Offload the blocking next() call of the sync generator to the threadpool
-                    item = await run_in_threadpool(next, extractor_gen)
-                except StopIteration:
+                # Passing None as the default prevents StopIteration from being 
+                # raised and intercepted by the asyncio event loop as a RuntimeError.
+                item = await run_in_threadpool(next, extractor_gen, None)
+                
+                if item is None:
                     # Current document chunk extraction completed cleanly
                     break
 
