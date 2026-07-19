@@ -816,14 +816,15 @@ export default function NeuralArchitect() {
             </Tooltip>
           </Group>
 
-          <Paper radius="md" position="relative" ref={containerRef} style={{ 
+          <Paper radius="md" ref={containerRef} style={{ 
+              position: 'relative', // FIX: Ensures all absolute children stay within this bounds
               flex: 1, minWidth: 300, overflow: 'hidden',
               opacity: isGraphCollapsed ? 0 : 1, pointerEvents: isGraphCollapsed ? 'none' : 'auto',
               background: 'rgba(20, 20, 25, 0.4)', backdropFilter: 'blur(12px)', 
               border: '1px solid rgba(255, 255, 255, 0.05)', transition: 'opacity 0.2s ease-in-out'
             }}>
               
-              <Paper position="absolute" top={16} left={16} p="xs" px="md" radius="md" bg="rgba(30,30,36,0.8)" style={{ zIndex: 10, border: '1px solid rgba(255, 255, 255, 0.05)' }}>
+              <Paper p="xs" px="md" radius="md" bg="rgba(30,30,36,0.8)" style={{ position: 'absolute', top: 16, left: 16, zIndex: 10, border: '1px solid rgba(255, 255, 255, 0.05)' }}>
                 <Group gap="sm">
                   <Box w={8} h={8} style={{ borderRadius: '50%', backgroundColor: isProcessing ? (streamPhase === 'edges' ? '#ec4899' : '#f59e0b') : '#8b5cf6', animation: isProcessing ? 'pulse 1s infinite' : 'none' }} />
                   <Text size="xs" fw={700} c="#e2e8f0" lts={0.5} tt="uppercase">{!isProcessing ? 'Engine Ready' : (streamPhase === 'nodes' ? 'Extracting Entities...' : (streamPhase === 'edges' ? 'Mapping Relationships...' : 'Initializing...'))}</Text>
@@ -831,7 +832,7 @@ export default function NeuralArchitect() {
               </Paper>
 
               {(uploadPhase === 'streaming' || uploadPhase === 'ready') && (
-                <Box position="absolute" top={16} right={16} style={{ zIndex: 10 }}>
+                <Box style={{ position: 'absolute', top: 16, right: 16, zIndex: 10 }}>
                   <Stack align="flex-end" gap="sm">
                     <Paper p={4} radius="md" bg="rgba(30,30,36,0.8)" style={{ border: '1px solid rgba(255, 255, 255, 0.05)' }}>
                       <Group gap="xs">
@@ -870,7 +871,8 @@ export default function NeuralArchitect() {
 
               {(uploadPhase === 'streaming' || uploadPhase === 'ready') ? (
                 <>
-                  <Box position="absolute" top={0} left={0} right={0} bottom={0}>
+                  {/* FIX: Ensure the canvas container is pinned properly via standard CSS style */}
+                  <Box style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
                     <ForceGraph2D
                       ref={graphRef} graphData={graphData} width={dimensions.width} height={dimensions.height}
                       enableNodeDrag enablePointerInteraction
@@ -905,7 +907,7 @@ export default function NeuralArchitect() {
                   </Box>
 
                   {/* --- COLOR REFERENCE LEGEND --- */}
-                  <Box position="absolute" bottom={16} right={16} style={{ zIndex: 10 }}>
+                  <Box style={{ position: 'absolute', bottom: 16, right: 16, zIndex: 10 }}>
                     <Paper p="md" radius="md" bg="rgba(30,30,36,0.8)" style={{ border: '1px solid rgba(255, 255, 255, 0.05)', minWidth: 180 }}>
                       <Stack gap="xs">
                         <Group justify="space-between" mb={4}>
@@ -929,7 +931,7 @@ export default function NeuralArchitect() {
 
                   <Transition mounted={!!selectedNode} transition="slide-up" duration={250} timingFunction="ease">
                     {(styles) => (
-                      <Card style={{ ...styles, position: 'absolute', bottom: 16, left: 16, width: 300, maxHeight: '50%', background: 'rgba(30,30,36,0.9)', border: '1px solid rgba(139, 92, 246, 0.3)', boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }} radius="md" p="md">
+                      <Card style={{ ...styles, position: 'absolute', bottom: 16, left: 16, width: 300, maxHeight: '50%', background: 'rgba(30,30,36,0.9)', border: '1px solid rgba(139, 92, 246, 0.3)', zIndex: 10, boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }} radius="md" p="md">
                         <Group justify="space-between" mb="md" pb="xs" style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.1)' }}>
                           <Group gap="xs">
                             <Layers size={14} color="#8b5cf6" />
@@ -963,7 +965,11 @@ export default function NeuralArchitect() {
                                 </Box>
 
                                 {Object.entries(selectedNode).map(([key, value]) => {
-                                  if (['x','y','z','vx','vy','vz','index', 'id', 'name', 'type'].includes(key) || typeof value === 'function') return null;
+                                  if (
+                                    ['x','y','z','vx','vy','vz','fx','fy','fz','index', 'id', 'name', 'type', 'color'].includes(key) || 
+                                    key.startsWith('__') || 
+                                    typeof value === 'function'
+                                  ) return null;
                                   
                                   return (
                                     <Box key={key} p="xs" bg="rgba(255,255,255,0.02)" style={{ borderRadius: 8, border: '1px solid rgba(255, 255, 255, 0.05)' }}>
