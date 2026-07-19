@@ -1,4 +1,5 @@
 from fastapi import APIRouter, UploadFile, File, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi.concurrency import run_in_threadpool
 from typing import List
 import PyPDF2
 import io
@@ -99,14 +100,20 @@ async def websocket_extract(websocket: WebSocket, batch_id: str):
     try:
         # Loop through each uploaded document sequentially over the stream
         for doc_index, doc in enumerate(staged_docs):
-            # The extraction LLM invents generic ids ("node1", "node2", ...)
-            # independently for each document. Without namespacing, unrelated
-            # entities from different files in the same batch can silently
-            # collide and get merged into a single graph node. Prefix ids
-            # per-document to keep each document's entities distinct.
+            # Prefix ids per-document to keep each document's entities distinct.
             prefix = f"d{doc_index}_"
 
-            for item in extract_graph_stream(doc["filename"], doc["text"]):
+            # Initialize the synchronous generator with dynamic file data
+            extractor_gen = extract_graph_stream(doc["filename"], doc["text"])
+            
+            while True:
+                try:
+                    # Offload the blocking next() call of the sync generator to the threadpool
+                    item = await run_in_threadpool(next, extractor_gen)
+                except StopIteration:
+                    # Current document chunk extraction completed cleanly
+                    break
+
                 if item["type"] == "node" and isinstance(item.get("data"), dict):
                     raw_id = str(item["data"].get("id", "")).strip()
                     if not raw_id:
@@ -120,12 +127,15 @@ async def websocket_extract(websocket: WebSocket, batch_id: str):
                     item["data"]["source"] = prefix + raw_source
                     item["data"]["target"] = prefix + raw_target
 
+                # Return payload to client UI dynamically
                 await websocket.send_json(item)
+                
                 if item["type"] == "node":
                     nodes_to_save.append(item["data"])
                 elif item["type"] == "edge":
                     edges_to_save.append(item["data"])
         
+        # Batch commit database matrices once the pipeline settles
         if nodes_to_save or edges_to_save:
             save_graph_data(nodes_to_save, edges_to_save)
             
