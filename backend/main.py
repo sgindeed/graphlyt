@@ -21,6 +21,18 @@ def startup_event():
     """Initializes the Graph Database on server start."""
     init_graph()
 
+# --- HEALTH CHECK ---
+@app.api_route("/health", methods=["GET", "HEAD"], tags=["Health"])
+async def health_check():
+    """
+    Checks system health status.
+    Supports GET for manual checking and HEAD for lightweight uptime monitoring.
+    """
+    return {
+        "status": "healthy",
+        "service": "Neural Architect | Core Engine"
+    }
+
 # --- MOUNT MODULAR ROUTES ---
 app.include_router(router)
 
