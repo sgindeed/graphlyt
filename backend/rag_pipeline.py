@@ -6,7 +6,7 @@ from reranking import rerank_chunks_with_llm
 import db
 
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
-FAST_LLM = os.environ.get("FAST_LLM", "llama-3.1-8b-instant")
+FAST_LLM = os.environ.get("FAST_LLM","llama3-70b-8192")
 
 # Initialize the native Groq client
 client = Groq(api_key=GROQ_API_KEY)
