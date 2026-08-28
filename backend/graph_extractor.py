@@ -6,7 +6,7 @@ from groq import Groq
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
-FAST_LLM = os.environ.get("FAST_LLM", "llama-3.1-8b-instant")
+FAST_LLM = os.environ.get("FAST_LLM", "openai/gpt-oss-20b")
 client = Groq(api_key=GROQ_API_KEY)
 
 text_splitter = RecursiveCharacterTextSplitter(
@@ -27,18 +27,24 @@ def extract_graph_stream(file_name, text_content):
     seen_nodes = set()
     seen_edges = set()
     
+    # The system prompt explicitly bans Markdown and enforces strict JSON keys
     prompt_base = """
-    Analyze this text and extract entities and relationships.
-    Output ONLY valid JSON in this format:
+    You are an expert data extraction algorithm. Analyze the provided text and extract entities and relationships.
+    You MUST output ONLY a valid JSON object. Do NOT wrap the response in Markdown code blocks (e.g., ```json). Do NOT add explanations.
+    Your output must strictly match this exact JSON schema:
     {
-      "nodes": [{"id": "Unique_ID", "name": "Human Readable Name", "type": "Category"}],
-      "edges": [{"source": "Unique_ID", "target": "Unique_ID", "relation": "Description"}]
+      "nodes": [
+        {"id": "unique_id_1", "name": "Human Readable Name", "type": "Category"}
+      ],
+      "edges": [
+        {"source": "unique_id_1", "target": "unique_id_2", "relation": "Description"}
+      ]
     }
     """
 
     for i, chunk in enumerate(chunks):
         # Defense in depth: Skip empty or tiny chunks that cause JSON generation failures
-        if len(chunk.strip()) < 10:
+        if len(chunk.strip()) < 15:
             continue
             
         try:
@@ -48,10 +54,10 @@ def extract_graph_stream(file_name, text_content):
                 model=FAST_LLM,
                 messages=[
                     {"role": "system", "content": prompt_base},
-                    {"role": "user", "content": f"Text:\n{chunk}"}
+                    {"role": "user", "content": f"Extract graph data from the following text:\n\n{chunk}"}
                 ],
                 response_format={"type": "json_object"},
-                temperature=0.2
+                temperature=0.1
             )
             
             data = json.loads(response.choices[0].message.content)
