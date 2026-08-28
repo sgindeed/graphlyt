@@ -12,5 +12,7 @@ openai
 networkx
 groq
 langchain
+pypdf
+pymupdf
 langchain-text-splitters
 chromadb
