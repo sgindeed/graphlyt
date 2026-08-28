@@ -1,43 +1,49 @@
-import chromadb
-from chunking import chunk_text
-from utils import dedupe_chunks
+import os
+import numpy as np
+from typing import Any, Dict, List
+from openai import AsyncOpenAI
+from utils import cosine_similarity
 
-chroma_client = chromadb.Client()
-try:
-    collection = chroma_client.create_collection(name="neural_architect_docs")
-except chromadb.errors.UniqueConstraintError:
-    collection = chroma_client.get_collection(name="neural_architect_docs")
-
-def index_document_to_vector_db(doc_id: str, text: str, filename: str = None) -> int:
-    """Chunks the text block and embeds it inside the Chroma DB collection."""
-    chunks = chunk_text(text, chunk_size=200, overlap=20)
-    if not chunks:
-        return 0
-
-    ids = [f"{doc_id}_chunk_{i}" for i in range(len(chunks))]
-    metadatas = [{"source": doc_id, "filename": filename or doc_id, "chunk_index": i} for i in range(len(chunks))]
-
-    collection.add(
-        documents=chunks,
-        metadatas=metadatas,
-        ids=ids
-    )
-    return len(chunks)
-
-def query_vector_db(query: str, n_results=10) -> list:
-    """Queries the Chroma DB collection and returns top matching text chunks.
-
-    Collapses near-duplicate hits before returning: repetitive source
-    documents (or overlapping chunk windows) can otherwise return several
-    copies of essentially the same passage, starving the reranker of
-    genuinely distinct context and producing thin, repetitive answers.
-    """
-    results = collection.query(query_texts=[query], n_results=n_results)
-    docs = results['documents'][0] if results['documents'] else []
-    return dedupe_chunks(docs)
+openai_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY", "your-openai-api-key"))
+chunk_embeddings_store: List[Dict[str, Any]] = []
 
 def clear_vector_db():
-    """Wipes out cached chunks from Chroma DB storage."""
-    existing = collection.get()
-    if existing['ids']:
-        collection.delete(ids=existing['ids'])
+    """Wipes out cached chunks and embeddings from memory."""
+    global chunk_embeddings_store
+    chunk_embeddings_store.clear()
+
+async def index_chunks_to_vector_db(combined_chunks: list):
+    """Generates embeddings and adds chunks to the memory store."""
+    global chunk_embeddings_store
+    if not combined_chunks:
+        return
+        
+    chunk_texts = [c["text"] for c in combined_chunks]
+    emb_res = await openai_client.embeddings.create(
+        model="text-embedding-3-small",
+        input=chunk_texts
+    )
+    for idx, item in enumerate(emb_res.data):
+        combined_chunks[idx]["embedding"] = np.array(item.embedding)
+
+    chunk_embeddings_store.extend(combined_chunks)
+
+async def query_vector_db(query: str, top_k: int = 4) -> list:
+    """Queries the embedding store via cosine similarity."""
+    global chunk_embeddings_store
+    if not chunk_embeddings_store:
+        return []
+        
+    query_emb_res = await openai_client.embeddings.create(
+        model="text-embedding-3-small",
+        input=[query]
+    )
+    query_vec = np.array(query_emb_res.data[0].embedding)
+
+    scored = []
+    for chunk in chunk_embeddings_store:
+        score = cosine_similarity(query_vec, chunk["embedding"])
+        scored.append((score, chunk))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [item[1]["text"] for item in scored[:top_k]]
