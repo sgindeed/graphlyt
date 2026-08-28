@@ -1,12 +1,13 @@
 import os
-from openai import AsyncOpenAI
+from groq import AsyncGroq
 from vector_store import query_vector_db
 from db import get_graph_data
 
-openai_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY", "your-openai-api-key"))
+groq_client = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
+FAST_LLM = "llama-3.3-70b-versatile"
 
 async def query_rag_pipeline(query: str) -> dict:
-    """Retrieves vectors, synthesizes a grounded answer, and maps utilized nodes."""
+    """Retrieves vectors, synthesizes a grounded answer via Groq, and maps utilized nodes."""
     retrieved_chunks = await query_vector_db(query, top_k=4)
     
     # Match relevant graph nodes
@@ -27,12 +28,13 @@ async def query_rag_pipeline(query: str) -> dict:
 
     user_prompt = f"Context:\n{context_str}\n\nQuery: {query}"
 
-    completion = await openai_client.chat.completions.create(
-        model="gpt-4o",
+    completion = await groq_client.chat.completions.create(
+        model=FAST_LLM,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
-        ]
+        ],
+        temperature=0.3
     )
 
     answer = completion.choices[0].message.content or ""
