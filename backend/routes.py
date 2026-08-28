@@ -1,6 +1,6 @@
 from fastapi import APIRouter, UploadFile, File, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.concurrency import run_in_threadpool
-from typing import List
+from typing import List, Union, Annotated
 import PyPDF2
 import io
 import uuid
@@ -26,8 +26,13 @@ async def reset_neural_network():
     return {"status": "success", "message": "Neural graph and vector matrices purged."}
 
 @router.post("/api/upload")
-async def upload_documents(files: Annotated[List[UploadFile], File(...)]):
+async def upload_documents(files: Annotated[Union[List[UploadFile], UploadFile], File(...)]):
     """Accepts multiple manifest payloads, parses text collections, maps vector spaces."""
+    
+    # Normalize single file uploads into a list to prevent 422 validation errors
+    if not isinstance(files, list):
+        files = [files]
+
     batch_id = str(uuid.uuid4())
     DOCUMENT_STORE[batch_id] = []
     total_chunks = 0
@@ -53,10 +58,7 @@ async def upload_documents(files: Annotated[List[UploadFile], File(...)]):
             file_text = deduplicate_text(file_text)
 
             if file_text.strip():
-                # Each file needs its own id namespace within the batch. Reusing
-                # batch_id alone for every file meant "chunk_0", "chunk_1"... from
-                # different files in the same upload collided in Chroma and
-                # silently overwrote one another.
+                # Each file needs its own id namespace within the batch.
                 doc_id = f"{batch_id}_f{file_index}"
                 chunks_added = index_document_to_vector_db(doc_id, file_text, filename=file.filename)
                 total_chunks += chunks_added
