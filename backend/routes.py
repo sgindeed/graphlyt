@@ -26,7 +26,7 @@ async def reset_neural_network():
     return {"status": "success", "message": "Neural graph and vector matrices purged."}
 
 @router.post("/api/upload")
-async def upload_documents(files: List[UploadFile] = File(...)):
+async def upload_documents(files: Annotated[List[UploadFile], File(...)]):
     """Accepts multiple manifest payloads, parses text collections, maps vector spaces."""
     batch_id = str(uuid.uuid4())
     DOCUMENT_STORE[batch_id] = []
