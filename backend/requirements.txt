@@ -10,6 +10,7 @@ wsproto
 python-multipart
 openai
 networkx
+sentence-transformers
 groq
 langchain
 pypdf
