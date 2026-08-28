@@ -1,68 +1,70 @@
 import re
-import hashlib
+import xml.etree.ElementTree as ET
+from typing import Any, Dict, List
+import numpy as np
 
+def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
+    norm_a = np.linalg.norm(a)
+    norm_b = np.linalg.norm(b)
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return float(np.dot(a, b) / (norm_a * norm_b))
 
-def _normalize(text: str) -> str:
-    """Normalizes whitespace/case so near-identical text hashes the same."""
-    return re.sub(r'\s+', ' ', text).strip().lower()
+def clean_xml_string(raw_content: str) -> str:
+    """Extracts XML block if enclosed in markdown code fences or tags."""
+    match = re.search(r"```(?:xml)?\s*(<graph>.*?</graph>)\s*```", raw_content, re.DOTALL | re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+    match = re.search(r"(<graph>.*?</graph>)", raw_content, re.DOTALL | re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+    return raw_content.strip()
 
+def parse_graph_xml(xml_content: str) -> Dict[str, List[Dict[str, Any]]]:
+    """Parses graph nodes and edges from structured XML."""
+    cleaned = clean_xml_string(xml_content)
+    nodes, edges = [], []
 
-def deduplicate_text(text: str, min_len: int = 30) -> str:
-    """
-    Strips duplicate paragraphs/sentences out of extracted document text.
+    try:
+        root = ET.fromstring(cleaned)
+        nodes_tag = root.find("nodes")
+        if nodes_tag is not None:
+            for n in nodes_tag.findall("node"):
+                node_id = n.get("id") or n.findtext("id")
+                node_name = n.get("name") or n.findtext("name") or node_id
+                node_type = n.get("type") or n.findtext("type") or "Concept"
+                if node_id:
+                    nodes.append({
+                        "id": node_id.strip(),
+                        "name": node_name.strip() if node_name else node_id.strip(),
+                        "type": node_type.strip()
+                    })
 
-    PyPDF2 (and PDF extractors generally) frequently re-emit repeated
-    boilerplate, headers/footers, or entire duplicated blocks when a PDF has
-    overlapping text layers, repeating layout elements, or multi-column
-    content extracted out of order. Left unchecked this:
-      1. Pollutes the vector index with near-duplicate chunks that crowd out
-         genuinely distinct context during retrieval (this is the root cause
-         of thin/repetitive RAG answers).
-      2. Wastes the graph-extraction LLM's context budget re-extracting the
-         same entities/relations instead of covering the whole document.
+        edges_tag = root.find("edges")
+        if edges_tag is not None:
+            for e in edges_tag.findall("edge"):
+                source = e.get("source") or e.findtext("source")
+                target = e.get("target") or e.findtext("target")
+                label = e.get("label") or e.findtext("label") or "RELATES_TO"
+                if source and target:
+                    edges.append({
+                        "source": source.strip(),
+                        "target": target.strip(),
+                        "label": label.strip()
+                    })
 
-    First occurrence of each paragraph/sentence is kept, original order is
-    preserved, and anything under `min_len` chars is left alone (too short
-    to safely dedupe - e.g. numbers, short headers).
-    """
-    if not text:
-        return text
+    except ET.ParseError:
+        for n_match in re.finditer(r'<node\s+id=["\'](.*?)["\']\s+name=["\'](.*?)["\']\s+type=["\'](.*?)["\']\s*/>', cleaned):
+            nodes.append({
+                "id": n_match.group(1).strip(),
+                "name": n_match.group(2).strip(),
+                "type": n_match.group(3).strip()
+            })
+        for e_match in re.finditer(r'<edge\s+source=["\'](.*?)["\']\s+target=["\'](.*?)["\']\s*(?:label=["\'](.*?)["\'])?\s*/>', cleaned):
+            edges.append({
+                "source": e_match.group(1).strip(),
+                "target": e_match.group(2).strip(),
+                "label": (e_match.group(3) or "RELATES_TO").strip()
+            })
 
-    paragraphs = re.split(r'\n\s*\n|\n', text)
-    seen_hashes = set()
-    kept_paragraphs = []
-
-    for paragraph in paragraphs:
-        sentences = re.split(r'(?<=[.!?])\s+', paragraph)
-        kept_sentences = []
-        for sentence in sentences:
-            clean = sentence.strip()
-            if not clean:
-                continue
-            norm = _normalize(clean)
-            if len(norm) < min_len:
-                kept_sentences.append(clean)
-                continue
-            h = hashlib.md5(norm.encode()).hexdigest()
-            if h in seen_hashes:
-                continue
-            seen_hashes.add(h)
-            kept_sentences.append(clean)
-        if kept_sentences:
-            kept_paragraphs.append(' '.join(kept_sentences))
-
-    return '\n'.join(kept_paragraphs)
-
-
-def dedupe_chunks(chunks: list) -> list:
-    """Drops exact/near-duplicate chunks, keeping the first occurrence."""
-    seen = set()
-    unique = []
-    for chunk in chunks:
-        norm = _normalize(chunk)
-        h = hashlib.md5(norm.encode()).hexdigest()
-        if h in seen:
-            continue
-        seen.add(h)
-        unique.append(chunk)
-    return unique
+    return {"nodes": nodes, "edges": edges}
