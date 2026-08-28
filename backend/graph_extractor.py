@@ -34,16 +34,22 @@ def extract_graph_stream(file_name, text_content):
       "nodes": [{"id": "Unique_ID", "name": "Human Readable Name", "type": "Category"}],
       "edges": [{"source": "Unique_ID", "target": "Unique_ID", "relation": "Description"}]
     }
-    Text: 
     """
 
     for i, chunk in enumerate(chunks):
+        # Defense in depth: Skip empty or tiny chunks that cause JSON generation failures
+        if len(chunk.strip()) < 10:
+            continue
+            
         try:
             if i > 0: time.sleep(2.5) 
 
             response = client.chat.completions.create(
                 model=FAST_LLM,
-                messages=[{"role": "user", "content": prompt_base + chunk}],
+                messages=[
+                    {"role": "system", "content": prompt_base},
+                    {"role": "user", "content": f"Text:\n{chunk}"}
+                ],
                 response_format={"type": "json_object"},
                 temperature=0.2
             )
