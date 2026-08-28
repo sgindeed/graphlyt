@@ -1,173 +1,133 @@
-from fastapi import APIRouter, UploadFile, File, WebSocket, WebSocketDisconnect, HTTPException
-from fastapi.concurrency import run_in_threadpool
-from typing import List, Union, Annotated
-import PyPDF2
 import io
 import uuid
+import asyncio
+from fastapi import APIRouter, File, UploadFile, WebSocket, WebSocketDisconnect, HTTPException
+from typing import List
+from pypdf import PdfReader
 
-# Isolate Data and State
 from models import ChatRequest
 from state import DOCUMENT_STORE
-
-# Core Engine Pipelines
-from db import save_graph_data, get_graph_data, clear_graph
-from vector_store import index_document_to_vector_db, clear_vector_db
-from graph_extractor import extract_graph_stream
+from db import clear_graph, set_graph_data, get_graph_data
+from vector_store import clear_vector_db, index_chunks_to_vector_db
+from chunking import chunk_text
+from graph_extractor import extract_graph_xml
 from rag_pipeline import query_rag_pipeline
-from utils import deduplicate_text
 
 router = APIRouter()
 
 @router.post("/api/clear")
 async def reset_neural_network():
-    """Wipes the NetworkX graph and Chroma DB matrices."""
+    """Wipes the graph and vector matrices."""
     clear_graph()
     clear_vector_db()
-    return {"status": "success", "message": "Neural graph and vector matrices purged."}
+    DOCUMENT_STORE.clear()
+    return {"status": "cleared"}
 
 @router.post("/api/upload")
-async def upload_documents(files: Annotated[Union[List[UploadFile], UploadFile], File(...)]):
-    """Accepts multiple manifest payloads, parses text collections, maps vector spaces."""
-    
-    # Normalize single file uploads into a list to prevent 422 validation errors
-    if not isinstance(files, list):
-        files = [files]
-
-    batch_id = str(uuid.uuid4())
-    DOCUMENT_STORE[batch_id] = []
-    total_chunks = 0
-    files_meta = []
+async def upload_documents(files: List[UploadFile] = File(...)):
+    """Accepts payloads, parses text, and maps vector spaces."""
+    doc_id = str(uuid.uuid4())
+    processed_files = []
+    combined_chunks = []
 
     try:
-        for file_index, file in enumerate(files):
-            if not file.filename.lower().endswith('.pdf'):
-                continue
+        for file in files:
+            content = await file.read()
+            extracted_text = ""
 
-            contents = await file.read()
-            pdf_reader = PyPDF2.PdfReader(io.BytesIO(contents))
+            if file.filename.lower().endswith(".pdf"):
+                reader = PdfReader(io.BytesIO(content))
+                for page in reader.pages:
+                    text = page.extract_text()
+                    if text:
+                        extracted_text += text + "\n"
+            else:
+                extracted_text = content.decode("utf-8", errors="ignore")
 
-            file_text = ""
-            for page in pdf_reader.pages:
-                extracted = page.extract_text()
-                if extracted:
-                    file_text += extracted + "\n"
+            chunks = chunk_text(extracted_text)
+            
+            processed_files.append({
+                "filename": file.filename,
+                "chunk_count": len(chunks)
+            })
 
-            # PDF extractors commonly re-emit repeated boilerplate / overlapping
-            # text layers as duplicated paragraphs. Clean this up once, up front,
-            # so it doesn't pollute vector chunks or waste the graph LLM's window.
-            file_text = deduplicate_text(file_text)
-
-            if file_text.strip():
-                # Each file needs its own id namespace within the batch.
-                doc_id = f"{batch_id}_f{file_index}"
-                chunks_added = index_document_to_vector_db(doc_id, file_text, filename=file.filename)
-                total_chunks += chunks_added
-
-                DOCUMENT_STORE[batch_id].append({
+            for idx, chunk in enumerate(chunks):
+                combined_chunks.append({
+                    "text": chunk,
                     "filename": file.filename,
-                    "text": file_text
+                    "chunk_index": idx
                 })
-                files_meta.append({"filename": file.filename, "chunk_count": chunks_added})
 
-        if not DOCUMENT_STORE[batch_id]:
-            raise HTTPException(status_code=400, detail="No valid text extracted from files.")
+        await index_chunks_to_vector_db(combined_chunks)
+
+        DOCUMENT_STORE[doc_id] = {
+            "files": processed_files,
+            "chunks": combined_chunks
+        }
 
         return {
-            "status": "staged", 
-            "doc_id": batch_id, 
-            "file_count": len(DOCUMENT_STORE[batch_id]),
-            "chunk_count": total_chunks,
-            "files": files_meta
+            "doc_id": doc_id,
+            "file_count": len(processed_files),
+            "chunk_count": len(combined_chunks),
+            "files": processed_files
         }
-        
-    except HTTPException:
-        raise
+
     except Exception as e:
         print(f"Batch Multi-Ingestion Error: {e}")
         raise HTTPException(status_code=500, detail="Neural batch ingestion failed.")
 
-@router.websocket("/api/ws/extract/{batch_id}")
-async def websocket_extract(websocket: WebSocket, batch_id: str):
-    """Iteratively processes staged batch text streams via open WebSocket channels."""
+@router.websocket("/api/ws/extract/{doc_id}")
+async def websocket_extract(websocket: WebSocket, doc_id: str):
+    """Processes staged batch streams via open channels."""
     await websocket.accept()
-    
-    staged_docs = DOCUMENT_STORE.get(batch_id)
-    if not staged_docs:
-        await websocket.send_json({"type": "error", "message": "Batch manifest missing from cache."})
+
+    if doc_id not in DOCUMENT_STORE:
+        await websocket.send_json({"type": "error", "message": "Document session not found."})
         await websocket.close()
         return
 
-    nodes_to_save, edges_to_save = [], []
+    doc_data = DOCUMENT_STORE[doc_id]
+    all_text = "\n\n".join([c["text"] for c in doc_data["chunks"][:10]])
 
     try:
-        # Loop through each uploaded document sequentially over the stream
-        for doc_index, doc in enumerate(staged_docs):
-            # Prefix ids per-document to keep each document's entities distinct.
-            prefix = f"d{doc_index}_"
+        parsed = await extract_graph_xml(all_text)
 
-            # Initialize the synchronous generator with dynamic file data
-            extractor_gen = extract_graph_stream(doc["filename"], doc["text"])
-            
-            while True:
-                # Passing None as the default prevents StopIteration from being 
-                # raised and intercepted by the asyncio event loop as a RuntimeError.
-                item = await run_in_threadpool(next, extractor_gen, None)
-                
-                if item is None:
-                    # Current document chunk extraction completed cleanly
-                    break
+        unique_nodes = {n["id"]: n for n in parsed["nodes"]}.values()
+        nodes_list = list(unique_nodes)
+        edges_list = parsed["edges"]
 
-                if item["type"] == "node" and isinstance(item.get("data"), dict):
-                    raw_id = str(item["data"].get("id", "")).strip()
-                    if not raw_id:
-                        continue
-                    item["data"]["id"] = prefix + raw_id
-                elif item["type"] == "edge" and isinstance(item.get("data"), dict):
-                    raw_source = str(item["data"].get("source", "")).strip()
-                    raw_target = str(item["data"].get("target", "")).strip()
-                    if not raw_source or not raw_target:
-                        continue
-                    item["data"]["source"] = prefix + raw_source
-                    item["data"]["target"] = prefix + raw_target
+        set_graph_data(nodes_list, edges_list)
 
-                # Return payload to client UI dynamically
-                await websocket.send_json(item)
-                
-                if item["type"] == "node":
-                    nodes_to_save.append(item["data"])
-                elif item["type"] == "edge":
-                    edges_to_save.append(item["data"])
-        
-        # Batch commit database matrices once the pipeline settles
-        if nodes_to_save or edges_to_save:
-            save_graph_data(nodes_to_save, edges_to_save)
-            
-        await websocket.send_json({
-            "type": "done", 
-            "nodes_added": len(nodes_to_save),
-            "edges_added": len(edges_to_save)
-        })
-        
+        # Stream Nodes
+        for node in nodes_list:
+            await websocket.send_json({"type": "node", "data": node})
+            await asyncio.sleep(0.04)
+
+        # Stream Edges
+        for edge in edges_list:
+            await websocket.send_json({"type": "edge", "data": edge})
+            await asyncio.sleep(0.06)
+
+        await websocket.send_json({"type": "done"})
+
     except WebSocketDisconnect:
         pass
     except Exception as e:
         await websocket.send_json({"type": "error", "message": str(e)})
     finally:
-        # Prevent memory leaks by cleaning up the staging dictionary
-        if batch_id in DOCUMENT_STORE:
-            del DOCUMENT_STORE[batch_id]
-        await websocket.close()
+        try:
+            await websocket.close()
+        except RuntimeError:
+            pass
 
 @router.post("/api/chat")
 async def chat_interface(request: ChatRequest):
-    """Interfaces with the RAG pipeline using Chroma DB and the reasoning LLM."""
+    """Interfaces with the RAG pipeline."""
     if not request.message:
-        raise HTTPException(status_code=400, detail="Query is empty.")
-    
-    rag_response = query_rag_pipeline(request.message)
-    return rag_response
+        raise HTTPException(status_code=400, detail="Query cannot be empty")
+    return await query_rag_pipeline(request.message)
 
 @router.get("/api/graph")
 async def fetch_network_graph():
-    """Returns the full NetworkX graph state for initial UI syncing."""
+    """Returns the full graph state."""
     return get_graph_data()
