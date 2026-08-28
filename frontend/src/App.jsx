@@ -27,8 +27,8 @@ const TYPE_COLORS = {
 };
 
 const EDGE_COLORS = {
-  default: 'rgba(139, 92, 246, 0.25)',     
-  highlighted: 'rgba(139, 92, 246, 0.9)', 
+  default: 'rgba(139, 92, 246, 0.4)',     
+  highlighted: 'rgba(139, 92, 246, 1)', 
   dimmed: 'rgba(255, 255, 255, 0.05)'
 };
 
@@ -44,7 +44,6 @@ const PROVENANCE_TABS = {
   retrieved: { label: 'Vector Matches', color: '#6366f1', mantineColor: 'indigo', icon: GitCompareArrows }
 };
 
-// --- BFS HELPER: Identify the largest connected cluster to prevent the camera from zooming out for outliers ---
 const getLargestComponentIds = (nodes, links) => {
   if (!nodes || nodes.length === 0) return new Set();
   
@@ -293,11 +292,26 @@ export default function NeuralArchitect() {
     }
   }, [messages]);
 
+  // MAGNETIC PHYSICS ENGINE CONFIGURATION
   useEffect(() => {
     if (graphRef.current) {
-      graphRef.current.d3Force('charge').strength(-1000); 
-      graphRef.current.d3Force('link').distance(() => 50 + Math.random() * 150);    
-      graphRef.current.d3Force('center').strength(0.04); 
+      const chargeForce = graphRef.current.d3Force('charge');
+      const linkForce = graphRef.current.d3Force('link');
+      const centerForce = graphRef.current.d3Force('center');
+
+      if (chargeForce) {
+        // High repulsion keeps unconnected nodes dispersed
+        chargeForce.strength(-400).distanceMax(500); 
+      }
+      
+      if (linkForce) {
+        // High strength and short distance snap connected nodes together violently like magnets
+        linkForce.distance(30).strength(1.5);
+      }
+      
+      if (centerForce) {
+        centerForce.strength(0.05); 
+      }
     }
   }, [graphData]);
 
@@ -489,11 +503,13 @@ export default function NeuralArchitect() {
         if (payload.type === 'node') {
           setStreamPhase('nodes');
           setGraphData(prev => ({ ...prev, nodes: [...prev.nodes, payload.data] }));
+          // Give nodes a slight bump to start spreading immediately
+          if (graphRef.current) graphRef.current.d3ReheatSimulation(0.1);
         } else if (payload.type === 'edge') {
           setStreamPhase('edges');
           setGraphData(prev => {
-            const sourceId = typeof payload.data.source === 'object' ? payload.data.source.id : payload.data.source;
-            const targetId = typeof payload.data.target === 'object' ? payload.data.target.id : payload.data.target;
+            const sourceId = payload.data.source;
+            const targetId = payload.data.target;
             
             const nodeIds = new Set(prev.nodes.map(n => n.id));
             if (nodeIds.has(sourceId) && nodeIds.has(targetId)) {
@@ -502,7 +518,8 @@ export default function NeuralArchitect() {
                return prev; 
             }
           });
-          if (graphRef.current) graphRef.current.d3ReheatSimulation(0.3);
+          // Highly active reheat to trigger the violent magnetic snap of the edges
+          if (graphRef.current) graphRef.current.d3ReheatSimulation(1);
         } else if (payload.type === 'error') {
           alert(`Pipeline Error: ${payload.message}`);
         } else if (payload.type === 'done') {
@@ -817,7 +834,7 @@ export default function NeuralArchitect() {
           </Group>
 
           <Paper radius="md" ref={containerRef} style={{ 
-              position: 'relative', // FIX: Ensures all absolute children stay within this bounds
+              position: 'relative', 
               flex: 1, minWidth: 300, overflow: 'hidden',
               opacity: isGraphCollapsed ? 0 : 1, pointerEvents: isGraphCollapsed ? 'none' : 'auto',
               background: 'rgba(20, 20, 25, 0.4)', backdropFilter: 'blur(12px)', 
@@ -871,7 +888,6 @@ export default function NeuralArchitect() {
 
               {(uploadPhase === 'streaming' || uploadPhase === 'ready') ? (
                 <>
-                  {/* FIX: Ensure the canvas container is pinned properly via standard CSS style */}
                   <Box style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
                     <ForceGraph2D
                       ref={graphRef} graphData={graphData} width={dimensions.width} height={dimensions.height}
@@ -899,7 +915,7 @@ export default function NeuralArchitect() {
                       }}
                       linkDirectionalParticleWidth={(l) => selectedNode && highlightedLinks.has(l) ? 3 : 2}
                       linkDirectionalParticleColor={() => '#e2e8f0'} 
-                      linkDirectionalParticleSpeed={streamPhase === 'edges' ? 0.01 : 0.005} 
+                      linkDirectionalParticleSpeed={streamPhase === 'edges' ? 0.02 : 0.005} 
                       
                       d3AlphaDecay={0.02} 
                       d3VelocityDecay={0.2} 
