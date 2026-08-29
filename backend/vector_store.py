@@ -7,8 +7,8 @@ from utils import cosine_similarity
 
 HF_TOKEN = os.getenv("HF_TOKEN", "your_huggingface_token")
 
-# Explicitly force the 'feature-extraction' pipeline to prevent SentenceSimilarity errors
-API_URL = "https://router.huggingface.co/hf-inference/pipeline/feature-extraction/sentence-transformers/all-MiniLM-L6-v2"
+# Corrected URL: The pipeline task must be appended AFTER the model ID on the new router
+API_URL = "https://router.huggingface.co/hf-inference/models/sentence-transformers/all-MiniLM-L6-v2/pipeline/feature-extraction"
 HEADERS = {"Authorization": f"Bearer {HF_TOKEN}"}
 
 chunk_embeddings_store: List[Dict[str, Any]] = []
@@ -18,7 +18,6 @@ def clear_vector_db():
     chunk_embeddings_store.clear()
 
 def _get_cloud_embeddings(texts: list) -> list:
-    """Fetches embeddings with a retry loop to survive network blips."""
     max_retries = 3
     for attempt in range(max_retries):
         try:
