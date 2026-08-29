@@ -1,6 +1,8 @@
 import os
 from groq import AsyncGroq
 from utils import parse_graph_xml
+from dotenv import load_dotenv
+
 load_dotenv()
 
 groq_client = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
