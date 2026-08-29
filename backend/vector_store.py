@@ -1,11 +1,13 @@
 import os
 import requests
+import time
 import numpy as np
 from typing import Any, Dict, List
 from utils import cosine_similarity
 
 HF_TOKEN = os.getenv("HF_TOKEN", "your_huggingface_token")
-API_URL = "https://api-inference.huggingface.co/pipeline/feature-extraction/sentence-transformers/all-MiniLM-L6-v2"
+# Updated to standard model inference URL
+API_URL = "https://api-inference.huggingface.co/models/sentence-transformers/all-MiniLM-L6-v2"
 HEADERS = {"Authorization": f"Bearer {HF_TOKEN}"}
 
 chunk_embeddings_store: List[Dict[str, Any]] = []
@@ -15,9 +17,29 @@ def clear_vector_db():
     chunk_embeddings_store.clear()
 
 def _get_cloud_embeddings(texts: list) -> list:
-    response = requests.post(API_URL, headers=HEADERS, json={"inputs": texts})
-    if response.status_code == 200:
-        return response.json()
+    """Fetches embeddings with a retry loop to survive Render DNS/network blips."""
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            # 15-second timeout prevents the thread from hanging indefinitely
+            response = requests.post(API_URL, headers=HEADERS, json={"inputs": texts}, timeout=15)
+            
+            if response.status_code == 200:
+                return response.json()
+            elif response.status_code == 503:
+                # Hugging Face serverless models sleep when inactive. 
+                # A 503 means it is waking up. Wait and retry.
+                time.sleep(5)
+                continue
+            else:
+                print(f"HF API Error {response.status_code}: {response.text}")
+                time.sleep(2)
+                
+        except requests.exceptions.RequestException as e:
+            print(f"Network glitch (Attempt {attempt + 1}/{max_retries}): {e}")
+            time.sleep(2)
+            
+    # Fallback to zero-vectors if all retries fail, ensuring the app doesn't fatally crash
     return [np.zeros(384).tolist() for _ in texts]
 
 async def index_chunks_to_vector_db(combined_chunks: list):
