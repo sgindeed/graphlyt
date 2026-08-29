@@ -4,13 +4,13 @@ from vector_store import query_vector_db
 from db import get_graph_data
 
 groq_client = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
-FAST_LLM = "llama-3.3-70b-versatile"
+
+# Migrated to Groq's active 120B model
+FAST_LLM = "openai/gpt-oss-120b"
 
 async def query_rag_pipeline(query: str) -> dict:
-    """Retrieves vectors, synthesizes a grounded answer via Groq, and maps utilized nodes."""
     retrieved_chunks = await query_vector_db(query, top_k=4)
     
-    # Match relevant graph nodes
     active_graph = get_graph_data()
     matched_nodes = []
     for node in active_graph.get("nodes", []):
