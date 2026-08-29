@@ -1,69 +1,37 @@
 import os
-import requests
-import time
-import numpy as np
-from typing import Any, Dict, List
-from utils import cosine_similarity
+from groq import AsyncGroq
+from utils import parse_graph_xml
 
-HF_TOKEN = os.getenv("HF_TOKEN", "your_huggingface_token")
+# Automatically pulls from Render's Environment Variables
+groq_client = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
 
-# Updated to the new Hugging Face router infrastructure
-API_URL = "https://router.huggingface.co/hf-inference/models/sentence-transformers/all-MiniLM-L6-v2"
-HEADERS = {"Authorization": f"Bearer {HF_TOKEN}"}
+# Migrated to Groq's active 120B model
+FAST_LLM = "openai/gpt-oss-120b"
 
-chunk_embeddings_store: List[Dict[str, Any]] = []
+async def extract_graph_xml(all_text: str):
+    prompt = f"""Extract a structured knowledge graph from the text below.
+Format the output strictly as XML conforming to this template:
+<graph>
+  <nodes>
+    <node id="UniqueEntityID" name="Entity Name" type="Person|Organization|Location|Concept|Event|Technology"/>
+  </nodes>
+  <edges>
+    <edge source="UniqueEntityID" target="UniqueEntityID" label="RELATION_NAME"/>
+  </edges>
+</graph>
 
-def clear_vector_db():
-    global chunk_embeddings_store
-    chunk_embeddings_store.clear()
+Text:
+{all_text}
+"""
 
-def _get_cloud_embeddings(texts: list) -> list:
-    """Fetches embeddings with a retry loop to survive network blips."""
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            response = requests.post(API_URL, headers=HEADERS, json={"inputs": texts}, timeout=15)
-            
-            if response.status_code == 200:
-                return response.json()
-            elif response.status_code == 503:
-                time.sleep(5)
-                continue
-            else:
-                print(f"HF API Error {response.status_code}: {response.text}")
-                time.sleep(2)
-                
-        except requests.exceptions.RequestException as e:
-            print(f"Network glitch (Attempt {attempt + 1}/{max_retries}): {e}")
-            time.sleep(2)
-            
-    return [np.zeros(384).tolist() for _ in texts]
+    response = await groq_client.chat.completions.create(
+        model=FAST_LLM,
+        messages=[
+            {"role": "system", "content": "You are a graph extraction engine that outputs strictly in XML format. Do not wrap the response in markdown blocks."},
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0.1
+    )
 
-async def index_chunks_to_vector_db(combined_chunks: list):
-    global chunk_embeddings_store
-    if not combined_chunks:
-        return
-        
-    chunk_texts = [c["text"] for c in combined_chunks]
-    embeddings = _get_cloud_embeddings(chunk_texts)
-    
-    for idx, emb in enumerate(embeddings):
-        combined_chunks[idx]["embedding"] = np.array(emb)
-
-    chunk_embeddings_store.extend(combined_chunks)
-
-async def query_vector_db(query: str, top_k: int = 4) -> list:
-    global chunk_embeddings_store
-    if not chunk_embeddings_store:
-        return []
-        
-    query_emb = _get_cloud_embeddings([query])[0]
-    query_vec = np.array(query_emb)
-
-    scored = []
-    for chunk in chunk_embeddings_store:
-        score = cosine_similarity(query_vec, chunk["embedding"])
-        scored.append((score, chunk))
-
-    scored.sort(key=lambda x: x[0], reverse=True)
-    return [item[1]["text"] for item in scored[:top_k]]
+    xml_output = response.choices[0].message.content or ""
+    return parse_graph_xml(xml_output)
