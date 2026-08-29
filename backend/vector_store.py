@@ -6,13 +6,14 @@ from typing import Any, Dict, List
 from utils import cosine_similarity
 
 HF_TOKEN = os.getenv("HF_TOKEN", "your_huggingface_token")
-API_URL = "https://router.huggingface.co/hf-inference/models/sentence-transformers/all-MiniLM-L6-v2"
+
+# Explicitly force the 'feature-extraction' pipeline to prevent SentenceSimilarity errors
+API_URL = "https://router.huggingface.co/hf-inference/pipeline/feature-extraction/sentence-transformers/all-MiniLM-L6-v2"
 HEADERS = {"Authorization": f"Bearer {HF_TOKEN}"}
 
 chunk_embeddings_store: List[Dict[str, Any]] = []
 
 def clear_vector_db():
-    """Wipes out cached chunks and embeddings from memory."""
     global chunk_embeddings_store
     chunk_embeddings_store.clear()
 
@@ -39,7 +40,6 @@ def _get_cloud_embeddings(texts: list) -> list:
     return [np.zeros(384).tolist() for _ in texts]
 
 async def index_chunks_to_vector_db(combined_chunks: list):
-    """Generates cloud embeddings and adds chunks to the memory store."""
     global chunk_embeddings_store
     if not combined_chunks:
         return
@@ -53,7 +53,6 @@ async def index_chunks_to_vector_db(combined_chunks: list):
     chunk_embeddings_store.extend(combined_chunks)
 
 async def query_vector_db(query: str, top_k: int = 4) -> list:
-    """Queries the embedding store via cosine similarity."""
     global chunk_embeddings_store
     if not chunk_embeddings_store:
         return []
