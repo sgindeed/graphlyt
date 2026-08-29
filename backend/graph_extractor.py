@@ -2,12 +2,12 @@ import os
 from groq import AsyncGroq
 from utils import parse_graph_xml
 
-# Initialize the Groq client
 groq_client = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
-FAST_LLM = "llama-3.3-70b-versatile"
+
+# Migrated to Groq's active 120B model
+FAST_LLM = "openai/gpt-oss-120b"
 
 async def extract_graph_xml(all_text: str):
-    """Calls Groq to generate the XML knowledge graph and parses it."""
     prompt = f"""Extract a structured knowledge graph from the text below.
 Format the output strictly as XML conforming to this template:
 <graph>
